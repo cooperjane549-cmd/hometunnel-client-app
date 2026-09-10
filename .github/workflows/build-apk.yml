@@ -24,9 +24,9 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Clean & Fetch Dependencies
+      - name: Repair and Fetch Dependencies
         run: |
-          flutter clean
+          flutter create --platforms=android .
           flutter pub get
 
       - name: Build Android APK
