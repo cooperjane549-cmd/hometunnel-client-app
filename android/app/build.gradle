@@ -23,11 +23,22 @@ android {
         targetSdkVersion 34
         versionCode 1
         versionName "1.0"
+
+        ndk {
+            // Include pre-compiled architectures so Gradle doesn't attempt native NDK build steps
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+        }
     }
 
     buildTypes {
         release {
             signingConfig signingConfigs.debug
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
@@ -38,7 +49,6 @@ flutter {
 
 dependencies {
     implementation "androidx.appcompat:appcompat:1.6.1"
-    // Updated valid WireGuard version
-    implementation "com.wireguard.android:tunnel:1.0.20230427"
+    // Verified published release on Maven Central
+    implementation "com.wireguard.android:tunnel:1.0.20260102"
 }
-
