@@ -9,7 +9,10 @@
         android:name="${applicationName}"
         android:icon="@drawable/ic_launcher">
 
-        <meta-data android:name="flutterEmbedding" android:value="2" />
+        <!-- Explicit V2 Embedding Meta-Data -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
 
         <activity
             android:name=".MainActivity"
