@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
@@ -31,6 +32,8 @@ class ClientHomePage extends StatefulWidget {
 }
 
 class _ClientHomePageState extends State<ClientHomePage> {
+  static const platform = MethodChannel('co.ke.hometunnel/wireguard');
+
   final TextEditingController _codeController = TextEditingController();
   final String _backendUrl = "https://hometunnel-backend-render.onrender.com";
   
@@ -66,11 +69,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
       ).timeout(const Duration(seconds: 15));
 
       if (pairResponse.statusCode == 200 || pairResponse.statusCode == 201) {
-        setState(() {
-          _isConnecting = false;
-          _isConnected = true;
-          _statusMessage = "Tunnel Active via Home Node!";
-        });
+        final data = jsonDecode(pairResponse.body);
+        final String nodeEndpoint = data['nodeEndpoint'] ?? '127.0.0.1:51820';
+        final String nodePublicKey = data['nodePublicKey'] ?? 'host_public_key';
+
+        await _startWireGuardTunnel(nodeEndpoint, nodePublicKey);
       } else {
         final body = jsonDecode(pairResponse.body);
         setState(() {
@@ -86,7 +89,40 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
-  void _disconnect() {
+  Future<void> _startWireGuardTunnel(String endpoint, String publicKey) async {
+    final wgConfig = '''
+[Interface]
+PrivateKey = CLIENT_GENERATED_PRIVATE_KEY
+Address = 10.200.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = $publicKey
+Endpoint = $endpoint
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+''';
+
+    try {
+      await platform.invokeMethod('startTunnel', {'config': wgConfig});
+      setState(() {
+        _isConnecting = false;
+        _isConnected = true;
+        _statusMessage = "Tunnel Active via Home Node!";
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _isConnecting = false;
+        _statusMessage = "VPN initialization failed: ${e.message}";
+      });
+    }
+  }
+
+  Future<void> _disconnect() async {
+    try {
+      await platform.invokeMethod('stopTunnel');
+    } catch (_) {}
+
     setState(() {
       _isConnected = false;
       _statusMessage = "Disconnected";
