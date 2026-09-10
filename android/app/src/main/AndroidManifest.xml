@@ -1,4 +1,4 @@
- xmlns:android="http://schemas.android.com/apk/res/android"
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -19,24 +19,23 @@
             android:windowSoftInputMode="adjustResize">
             
             <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
             
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- WireGuard VpnService with tools:replace to resolve manifest merger conflict -->
+        <!-- WireGuard VpnService overriding library default -->
         <service
-            android:name="com.wireguard.android.backend.GoBackend$VpnService"
+            android:name="com.wireguard.android.backend.GoBackend.VpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="true"
             tools:replace="android:exported">
             <intent-filter>
-                <action android:name="android.net.VpnService"/>
+                <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
 
