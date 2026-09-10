@@ -38,4 +38,10 @@ flutter {
 
 dependencies {
     implementation "androidx.appcompat:appcompat:1.6.1"
+    
+    implementation "androidx.appcompat:appcompat:1.6.1"
+    // Official pre-compiled WireGuard Android library
+    implementation "com.wireguard.android:tunnel:1.0.20230707"
+
+
 }
