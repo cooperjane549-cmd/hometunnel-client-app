@@ -34,7 +34,6 @@ class ClientHomePage extends StatefulWidget {
 
 class _ClientHomePageState extends State<ClientHomePage> {
   static const platform = MethodChannel('co.ke.hometunnel/wireguard');
-
   final TextEditingController _codeController = TextEditingController();
   final String _backendUrl = "https://hometunnel-backend-render.onrender.com";
 
@@ -42,17 +41,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
   bool _isConnected = false;
   String _statusMessage = "Disconnected";
 
-  // Generates a properly clamped 32-byte WireGuard Curve25519 private key
   String _generateWireGuardPrivateKey() {
     final Random random = Random.secure();
-    final List<int> key = List<int>.generate(32, (_) => random.nextInt(256));
+    final List<int> keyBytes = List<int>.generate(32, (_) => random.nextInt(256));
     
-    // Clamp key for Curve25519
-    key[0] &= 248;
-    key[31] &= 127;
-    key[31] |= 64;
+    // Clamp key bytes according to Curve25519 specification
+    keyBytes[0] &= 248;
+    keyBytes[31] &= 127;
+    keyBytes[31] |= 64;
 
-    return base64Encode(key);
+    return base64Encode(keyBytes);
   }
 
   Future<void> _connectToHost() async {
@@ -66,28 +64,28 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
     setState(() {
       _isConnecting = true;
-      _statusMessage = "Pairing with Host ($code)...";
+      _statusMessage = "Connecting to Render...";
     });
 
     try {
-      await http.get(Uri.parse(_backendUrl)).timeout(const Duration(seconds: 15));
+      // Warm up backend
+      await http.get(Uri.parse(_backendUrl)).timeout(const Duration(seconds: 20));
+
+      setState(() {
+        _statusMessage = "Pairing with Code $code...";
+      });
 
       final pairResponse = await http.post(
         Uri.parse("$_backendUrl/pair"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"code": code, "role": "client"}),
+        body: jsonEncode({"code": code}),
       ).timeout(const Duration(seconds: 15));
 
-      if (pairResponse.statusCode == 200 || pairResponse.statusCode == 201) {
+      if (pairResponse.statusCode == 200) {
         final data = jsonDecode(pairResponse.body);
 
-        final String nodeEndpoint = (data['nodeEndpoint'] != null && data['nodeEndpoint'].toString().isNotEmpty)
-            ? data['nodeEndpoint']
-            : '127.0.0.1:51820';
-
-        final String nodePublicKey = (data['nodePublicKey'] != null && data['nodePublicKey'].toString().length >= 43)
-            ? data['nodePublicKey']
-            : _generateWireGuardPrivateKey();
+        final String nodeEndpoint = data['nodeEndpoint'];
+        final String nodePublicKey = data['nodePublicKey'];
 
         await _startWireGuardTunnel(nodeEndpoint, nodePublicKey);
       } else {
@@ -100,7 +98,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
     } catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = "Connection failed. Ensure Host app is active.";
+        _statusMessage = "Connection error. Ensure Host node is active.";
       });
     }
   }
