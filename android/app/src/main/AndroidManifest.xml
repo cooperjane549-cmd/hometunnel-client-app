@@ -9,6 +9,7 @@
         android:name="${applicationName}"
         android:icon="@drawable/ic_launcher">
 
+        <!-- Explicit V2 Embedding Required by Flutter Tools -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
