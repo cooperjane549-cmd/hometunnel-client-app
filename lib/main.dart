@@ -27,7 +27,7 @@ class ClientHomePage extends StatefulWidget {
   const ClientHomePage({super.key});
 
   @override
-  State<ClientHomePage> meCreateState() => _ClientHomePageState();
+  State<ClientHomePage> createState() => _ClientHomePageState();
 }
 
 class _ClientHomePageState extends State<ClientHomePage> {
@@ -53,28 +53,35 @@ class _ClientHomePageState extends State<ClientHomePage> {
     });
 
     try {
-      final response = await http.post(
+      // 1. Ping server to wake up Render if dormant
+      await http.get(
+        Uri.parse(_backendUrl),
+      ).timeout(const Duration(seconds: 15));
+
+      // 2. Perform pairing request
+      final pairResponse = await http.post(
         Uri.parse("$_backendUrl/pair"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"code": code, "role": "client"}),
-      );
+      ).timeout(const Duration(seconds: 15));
 
-      if (response.statusCode == 200) {
+      if (pairResponse.statusCode == 200 || pairResponse.statusCode == 201) {
         setState(() {
           _isConnecting = false;
           _isConnected = true;
           _statusMessage = "Tunnel Active via Home Node!";
         });
       } else {
+        final body = jsonDecode(pairResponse.body);
         setState(() {
           _isConnecting = false;
-          _statusMessage = "Pairing failed. Check code.";
+          _statusMessage = body['message'] ?? "Pairing failed. Code invalid or expired.";
         });
       }
     } catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = "Error connecting to signaling server.";
+        _statusMessage = "Connection failed. Ensure Host app is open.";
       });
     }
   }
