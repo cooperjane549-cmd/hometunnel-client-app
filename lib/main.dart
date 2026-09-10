@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -36,10 +37,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   final TextEditingController _codeController = TextEditingController();
   final String _backendUrl = "https://hometunnel-backend-render.onrender.com";
-  
+
   bool _isConnecting = false;
   bool _isConnected = false;
   String _statusMessage = "Disconnected";
+
+  // Generates a properly clamped 32-byte WireGuard Curve25519 private key
+  String _generateWireGuardPrivateKey() {
+    final Random random = Random.secure();
+    final List<int> key = List<int>.generate(32, (_) => random.nextInt(256));
+    
+    // Clamp key for Curve25519
+    key[0] &= 248;
+    key[31] &= 127;
+    key[31] |= 64;
+
+    return base64Encode(key);
+  }
 
   Future<void> _connectToHost() async {
     final code = _codeController.text.trim();
@@ -56,12 +70,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
     });
 
     try {
-      // 1. Ping server to wake up Render if dormant
-      await http.get(
-        Uri.parse(_backendUrl),
-      ).timeout(const Duration(seconds: 15));
+      await http.get(Uri.parse(_backendUrl)).timeout(const Duration(seconds: 15));
 
-      // 2. Perform pairing request
       final pairResponse = await http.post(
         Uri.parse("$_backendUrl/pair"),
         headers: {"Content-Type": "application/json"},
@@ -70,8 +80,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
       if (pairResponse.statusCode == 200 || pairResponse.statusCode == 201) {
         final data = jsonDecode(pairResponse.body);
-        final String nodeEndpoint = data['nodeEndpoint'] ?? '127.0.0.1:51820';
-        final String nodePublicKey = data['nodePublicKey'] ?? 'host_public_key';
+
+        final String nodeEndpoint = (data['nodeEndpoint'] != null && data['nodeEndpoint'].toString().isNotEmpty)
+            ? data['nodeEndpoint']
+            : '127.0.0.1:51820';
+
+        final String nodePublicKey = (data['nodePublicKey'] != null && data['nodePublicKey'].toString().length >= 43)
+            ? data['nodePublicKey']
+            : _generateWireGuardPrivateKey();
 
         await _startWireGuardTunnel(nodeEndpoint, nodePublicKey);
       } else {
@@ -84,15 +100,17 @@ class _ClientHomePageState extends State<ClientHomePage> {
     } catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = "Connection failed. Ensure Host app is open.";
+        _statusMessage = "Connection failed. Ensure Host app is active.";
       });
     }
   }
 
   Future<void> _startWireGuardTunnel(String endpoint, String publicKey) async {
+    final clientPrivateKey = _generateWireGuardPrivateKey();
+
     final wgConfig = '''
 [Interface]
-PrivateKey = CLIENT_GENERATED_PRIVATE_KEY
+PrivateKey = $clientPrivateKey
 Address = 10.200.0.2/32
 DNS = 1.1.1.1
 
@@ -113,7 +131,7 @@ PersistentKeepalive = 25
     } on PlatformException catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = "VPN initialization failed: ${e.message}";
+        _statusMessage = e.message ?? "VPN initialization failed.";
       });
     }
   }
