@@ -10,7 +10,12 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
-
+  
+dependencies:
+  http: ^1.2.0
+  cryptography: ^2.7.0
+  wireguard_flutter: ^0.3.0   # check pub.dev for the current version
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -18,3 +23,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
