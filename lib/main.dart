@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:cryptography/cryptography.dart';
+import 'package:wireguard_flutter/wireguard_flutter.dart';
 
 void main() {
   runApp(const HomeTunnelClientApp());
@@ -33,27 +33,47 @@ class ClientHomePage extends StatefulWidget {
 }
 
 class _ClientHomePageState extends State<ClientHomePage> {
-  static const platform = MethodChannel('co.ke.hometunnel/wireguard');
   final TextEditingController _codeController = TextEditingController();
   final String _backendUrl = "https://hometunnel-backend-render.onrender.com";
+  final wireguard = WireGuardFlutter.instance;
 
   bool _isConnecting = false;
   bool _isConnected = false;
   String _statusMessage = "Disconnected";
 
-  String _generateWireGuardPrivateKey() {
-    final Random random = Random.secure();
-    final List<int> keyBytes = List<int>.generate(32, (_) => random.nextInt(256));
-    
-    // Clamp key bytes according to Curve25519 specification
-    keyBytes[0] &= 248;
-    keyBytes[31] &= 127;
-    keyBytes[31] |= 64;
+  String _clientPrivateKey = "";
+  String _clientPublicKey = "";
+  bool _keysReady = false;
 
-    return base64Encode(keyBytes);
+  @override
+  void initState() {
+    super.initState();
+    _generateRealKeyPair();
+  }
+
+  // Generates a genuine X25519 keypair â€” this is what WireGuard's own crypto
+  // actually needs. No more random-bytes placeholders.
+  Future<void> _generateRealKeyPair() async {
+    final algorithm = X25519();
+    final keyPair = await algorithm.newKeyPair();
+    final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
+    final publicKey = await keyPair.extractPublicKey();
+
+    setState(() {
+      _clientPrivateKey = base64Encode(privateKeyBytes);
+      _clientPublicKey = base64Encode(publicKey.bytes);
+      _keysReady = true;
+    });
   }
 
   Future<void> _connectToHost() async {
+    if (!_keysReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Still generating keys, try again in a second")),
+      );
+      return;
+    }
+
     final code = _codeController.text.trim();
     if (code.length != 6) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -64,83 +84,93 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
     setState(() {
       _isConnecting = true;
-      _statusMessage = "Connecting to Render...";
+      _statusMessage = "Looking up host...";
     });
 
     try {
-      // Warm up backend
-      await http.get(Uri.parse(_backendUrl)).timeout(const Duration(seconds: 20));
-
-      setState(() {
-        _statusMessage = "Pairing with Code $code...";
-      });
-
       final pairResponse = await http.post(
         Uri.parse("$_backendUrl/pair"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"code": code}),
-      ).timeout(const Duration(seconds: 15));
+        body: jsonEncode({"code": code, "clientPublicKey": _clientPublicKey}),
+      );
 
-      if (pairResponse.statusCode == 200) {
-        final data = jsonDecode(pairResponse.body);
-
-        final String nodeEndpoint = data['nodeEndpoint'];
-        final String nodePublicKey = data['nodePublicKey'];
-
-        await _startWireGuardTunnel(nodeEndpoint, nodePublicKey);
-      } else {
-        final body = jsonDecode(pairResponse.body);
+      if (pairResponse.statusCode != 200) {
         setState(() {
           _isConnecting = false;
-          _statusMessage = body['message'] ?? "Pairing failed. Code invalid or expired.";
+          _statusMessage = "Invalid or expired code.";
         });
+        return;
       }
+
+      final data = jsonDecode(pairResponse.body);
+      final String hostPublicKey = data['hostPublicKey'];
+      final String hostEndpoint = data['hostEndpoint'];
+
+      await _startWireGuardTunnel(hostPublicKey, hostEndpoint);
     } catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = "Connection error. Ensure Host node is active.";
+        _statusMessage = "Connection failed. Check your internet and try again.";
       });
     }
   }
 
-  Future<void> _startWireGuardTunnel(String endpoint, String publicKey) async {
-    final clientPrivateKey = _generateWireGuardPrivateKey();
+  Future<void> _startWireGuardTunnel(String hostPublicKey, String hostEndpoint) async {
+    setState(() => _statusMessage = "Connecting to Home Node...");
 
     final wgConfig = '''
 [Interface]
-PrivateKey = $clientPrivateKey
+PrivateKey = $_clientPrivateKey
 Address = 10.200.0.2/32
 DNS = 1.1.1.1
 
 [Peer]
-PublicKey = $publicKey
-Endpoint = $endpoint
+PublicKey = $hostPublicKey
+Endpoint = $hostEndpoint
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 ''';
 
     try {
-      await platform.invokeMethod('startTunnel', {'config': wgConfig});
-      setState(() {
-        _isConnecting = false;
-        _isConnected = true;
-        _statusMessage = "Tunnel Active via Home Node!";
+      await wireguard.initialize(interfaceName: 'wg0');
+
+      wireguard.vpnStageSnapshot.listen((stage) {
+        // NOTE: if this stays stuck on "connecting" and never reaches
+        // "connected", the most common cause is that the host hasn't added
+        // your public key as a peer yet on their end (see /host/pending in
+        // the backend) â€” WireGuard silently drops packets from unknown
+        // peers rather than returning an error.
+        setState(() {
+          _statusMessage = "VPN stage: $stage";
+          if (stage.toString().toLowerCase().contains('connected')) {
+            _isConnecting = false;
+            _isConnected = true;
+            _statusMessage = "Tunnel Active via Home Node!";
+          }
+        });
       });
-    } on PlatformException catch (e) {
+
+      await wireguard.startVpn(
+        serverAddress: hostEndpoint,
+        wgQuickConfig: wgConfig,
+        providerBundleIdentifier: 'co.ke.hometunnel.wgextension',
+      );
+    } catch (e) {
       setState(() {
         _isConnecting = false;
-        _statusMessage = e.message ?? "VPN initialization failed.";
+        _statusMessage = "VPN initialization failed: $e";
       });
     }
   }
 
   Future<void> _disconnect() async {
     try {
-      await platform.invokeMethod('stopTunnel');
+      await wireguard.stopVpn();
     } catch (_) {}
 
     setState(() {
       _isConnected = false;
+      _isConnecting = false;
       _statusMessage = "Disconnected";
       _codeController.clear();
     });
