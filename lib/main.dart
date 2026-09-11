@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +38,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
   final String _backendUrl = "https://hometunnel-backend-render.onrender.com";
   final wireguard = WireGuardFlutter.instance;
 
+  StreamSubscription<VpnStage>? _vpnStageSubscription;
+
   bool _isConnecting = false;
   bool _isConnected = false;
   String _statusMessage = "Disconnected";
@@ -52,14 +55,20 @@ class _ClientHomePageState extends State<ClientHomePage> {
     _generateRealKeyPair();
   }
 
-  // Generates a genuine X25519 keypair â€” this is what WireGuard's own crypto
-  // actually needs. No more random-bytes placeholders.
+  @override
+  void dispose() {
+    _vpnStageSubscription?.cancel();
+    _codeController.dispose();
+    super.dispose();
+  }
+
   Future<void> _generateRealKeyPair() async {
     final algorithm = X25519();
     final keyPair = await algorithm.newKeyPair();
     final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
     final publicKey = await keyPair.extractPublicKey();
 
+    if (!mounted) return;
     setState(() {
       _clientPrivateKey = base64Encode(privateKeyBytes);
       _clientPublicKey = base64Encode(publicKey.bytes);
@@ -93,7 +102,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
         Uri.parse("$_backendUrl/pair"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"code": code, "clientPublicKey": _clientPublicKey}),
-      );
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
 
       if (pairResponse.statusCode != 200) {
         setState(() {
@@ -109,6 +120,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
       await _startWireGuardTunnel(hostPublicKey, hostEndpoint);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isConnecting = false;
         _statusMessage = "Connection failed. Check your internet and try again.";
@@ -137,14 +149,10 @@ PersistentKeepalive = 25
         await wireguard.initialize(interfaceName: 'wg0', vpnName: 'HomeTunnel');
         _wgInitialized = true;
 
-        wireguard.vpnStageSnapshot.listen((stage) {
-          // NOTE: if this stays stuck on "connecting" and never reaches
-          // "connected", the most common cause is that the host hasn't
-          // added your public key as a peer yet on their end â€” WireGuard
-          // silently drops packets from unknown peers rather than
-          // returning an error.
+        _vpnStageSubscription = wireguard.vpnStageSnapshot.listen((stage) {
+          if (!mounted) return;
           setState(() {
-            _statusMessage = "VPN stage: $stage";
+            _statusMessage = "VPN stage: ${stage.name}";
             if (stage == VpnStage.connected) {
               _isConnecting = false;
               _isConnected = true;
@@ -164,6 +172,7 @@ PersistentKeepalive = 25
         providerBundleIdentifier: 'co.ke.hometunnel.wgextension',
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isConnecting = false;
         _statusMessage = "VPN initialization failed: $e";
@@ -176,6 +185,7 @@ PersistentKeepalive = 25
       await wireguard.stopVpn();
     } catch (_) {}
 
+    if (!mounted) return;
     setState(() {
       _isConnected = false;
       _isConnecting = false;
@@ -242,7 +252,11 @@ PersistentKeepalive = 25
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 child: _isConnecting
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? const SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
                     : const Text('Connect Tunnel', style: TextStyle(fontSize: 18, color: Colors.white)),
               ),
             ] else ...[
