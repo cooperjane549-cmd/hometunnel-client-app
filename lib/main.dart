@@ -145,11 +145,11 @@ PersistentKeepalive = 25
           // returning an error.
           setState(() {
             _statusMessage = "VPN stage: $stage";
-            if (stage == VpnEngine.vpnConnected) {
+            if (stage == VpnStage.connected) {
               _isConnecting = false;
               _isConnected = true;
               _statusMessage = "Tunnel Active via Home Node!";
-            } else if (stage == VpnEngine.vpnDisconnected) {
+            } else if (stage == VpnStage.disconnected) {
               _isConnecting = false;
               _isConnected = false;
               _statusMessage = "Disconnected";
