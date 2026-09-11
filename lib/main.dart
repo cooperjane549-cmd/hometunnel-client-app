@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:cryptography/cryptography.dart';
-import 'package:wireguard_flutter/wireguard_flutter.dart';
+import 'package:wireguard_flutter_plus/wireguard_flutter_plus.dart';
 
 void main() {
   runApp(const HomeTunnelClientApp());
@@ -44,6 +44,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   String _clientPrivateKey = "";
   String _clientPublicKey = "";
   bool _keysReady = false;
+  bool _wgInitialized = false;
 
   @override
   void initState() {
@@ -132,23 +133,30 @@ PersistentKeepalive = 25
 ''';
 
     try {
-      await wireguard.initialize(interfaceName: 'wg0');
+      if (!_wgInitialized) {
+        await wireguard.initialize(interfaceName: 'wg0', vpnName: 'HomeTunnel');
+        _wgInitialized = true;
 
-      wireguard.vpnStageSnapshot.listen((stage) {
-        // NOTE: if this stays stuck on "connecting" and never reaches
-        // "connected", the most common cause is that the host hasn't added
-        // your public key as a peer yet on their end (see /host/pending in
-        // the backend) â€” WireGuard silently drops packets from unknown
-        // peers rather than returning an error.
-        setState(() {
-          _statusMessage = "VPN stage: $stage";
-          if (stage.toString().toLowerCase().contains('connected')) {
-            _isConnecting = false;
-            _isConnected = true;
-            _statusMessage = "Tunnel Active via Home Node!";
-          }
+        wireguard.vpnStageSnapshot.listen((stage) {
+          // NOTE: if this stays stuck on "connecting" and never reaches
+          // "connected", the most common cause is that the host hasn't
+          // added your public key as a peer yet on their end â€” WireGuard
+          // silently drops packets from unknown peers rather than
+          // returning an error.
+          setState(() {
+            _statusMessage = "VPN stage: $stage";
+            if (stage == VpnEngine.vpnConnected) {
+              _isConnecting = false;
+              _isConnected = true;
+              _statusMessage = "Tunnel Active via Home Node!";
+            } else if (stage == VpnEngine.vpnDisconnected) {
+              _isConnecting = false;
+              _isConnected = false;
+              _statusMessage = "Disconnected";
+            }
+          });
         });
-      });
+      }
 
       await wireguard.startVpn(
         serverAddress: hostEndpoint,
