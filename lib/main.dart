@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:cryptography/cryptography.dart';
 import 'package:wireguard_flutter_plus/wireguard_flutter_plus.dart';
 
 void main() {
@@ -63,17 +62,22 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   Future<void> _generateRealKeyPair() async {
-    final algorithm = X25519();
-    final keyPair = await algorithm.newKeyPair();
-    final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
-    final publicKey = await keyPair.extractPublicKey();
-
-    if (!mounted) return;
-    setState(() {
-      _clientPrivateKey = base64Encode(privateKeyBytes);
-      _clientPublicKey = base64Encode(publicKey.bytes);
-      _keysReady = true;
-    });
+    try {
+      // Use native WireGuard key generator to guarantee raw 32-byte keys
+      final keyPair = await wireguard.generateKeyPair();
+      
+      if (!mounted) return;
+      setState(() {
+        _clientPrivateKey = keyPair.privateKey;
+        _clientPublicKey = keyPair.publicKey;
+        _keysReady = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = "Key generation failed: $e";
+      });
+    }
   }
 
   Future<void> _connectToHost() async {
