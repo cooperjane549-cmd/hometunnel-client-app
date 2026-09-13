@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:wireguard_flutter_plus/wireguard_flutter_plus.dart';
@@ -51,7 +53,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   @override
   void initState() {
     super.initState();
-    _generateRealKeyPair();
+    _generateWireGuardKeyPair();
   }
 
   @override
@@ -61,15 +63,27 @@ class _ClientHomePageState extends State<ClientHomePage> {
     super.dispose();
   }
 
-  Future<void> _generateRealKeyPair() async {
+  /// Generates a valid 32-byte raw Curve25519 key pair compatible with WireGuard
+  Future<void> _generateWireGuardKeyPair() async {
     try {
-      // Use native WireGuard key generator to guarantee raw 32-byte keys
-      final keyPair = await wireguard.generateKeyPair();
-      
+      final secureRandom = Random.secure();
+      final privateKeyBytes = Uint8List(32);
+      for (int i = 0; i < 32; i++) {
+        privateKeyBytes[i] = secureRandom.nextInt(256);
+      }
+
+      // Clamp private key as per Curve25519 specification
+      privateKeyBytes[0] &= 248;
+      privateKeyBytes[31] &= 127;
+      privateKeyBytes[31] |= 64;
+
+      // Compute public key using basepoint mult
+      final publicKeyBytes = _curve25519BasePointMult(privateKeyBytes);
+
       if (!mounted) return;
       setState(() {
-        _clientPrivateKey = keyPair.privateKey;
-        _clientPublicKey = keyPair.publicKey;
+        _clientPrivateKey = base64Encode(privateKeyBytes);
+        _clientPublicKey = base64Encode(publicKeyBytes);
         _keysReady = true;
       });
     } catch (e) {
@@ -78,6 +92,72 @@ class _ClientHomePageState extends State<ClientHomePage> {
         _statusMessage = "Key generation failed: $e";
       });
     }
+  }
+
+  // Curve25519 Scalar Multiplication (Basepoint G)
+  Uint8List _curve25519BasePointMult(Uint8List sk) {
+    final BigInt p = BigInt.parse("57896044618658097711785492504343953926634992332820282019728792003956564819949");
+    final BigInt d = _decodeLittleEndian(sk);
+
+    // Compute (x, z) coordinates over Montgomery curve y^2 = x^3 + 486662*x^2 + x
+    BigInt x1 = BigInt.from(9);
+    BigInt x2 = BigInt.one;
+    BigInt z2 = BigInt.zero;
+    BigInt x3 = x1;
+    BigInt z3 = BigInt.one;
+    bool swap = false;
+
+    for (int t = 254; t >= 0; t--) {
+      bool kT = ((d >> t) & BigInt.one) == BigInt.one;
+      swap ^= kT;
+      if (swap) {
+        var dummy = x2; x2 = x3; x3 = dummy;
+        dummy = z2; z2 = z3; z3 = dummy;
+      }
+      swap = kT;
+
+      BigInt a = (x2 + z2) % p;
+      BigInt aa = (a * a) % p;
+      BigInt b = (x2 - z2) % p;
+      BigInt bb = (b * b) % p;
+      BigInt e = (aa - bb) % p;
+      BigInt c = (x3 + z3) % p;
+      BigInt dVal = (x3 - z3) % p;
+      BigInt da = (dVal * a) % p;
+      BigInt cb = (c * b) % p;
+
+      x3 = ((da + cb) % p * (da + cb) % p) % p;
+      z3 = (x1 * ((da - cb) % p * (da - cb) % p) % p) % p;
+      x2 = (aa * bb) % p;
+      BigInt a24 = BigInt.from(121665);
+      z2 = (e * ((bb + (a24 * e) % p) % p)) % p;
+    }
+
+    if (swap) {
+      var dummy = x2; x2 = x3; x3 = dummy;
+      dummy = z2; z2 = z3; z3 = dummy;
+    }
+
+    BigInt pkVal = (x2 * z2.modPow(p - BigInt.two, p)) % p;
+    return _encodeLittleEndian(pkVal, 32);
+  }
+
+  BigInt _decodeLittleEndian(Uint8List bytes) {
+    BigInt result = BigInt.zero;
+    for (int i = bytes.length - 1; i >= 0; i--) {
+      result = (result << 8) | BigInt.from(bytes[i]);
+    }
+    return result;
+  }
+
+  Uint8List _encodeLittleEndian(BigInt val, int length) {
+    final bytes = Uint8List(length);
+    BigInt temp = val;
+    for (int i = 0; i < length; i++) {
+      bytes[i] = (temp & BigInt.from(0xFF)).toInt();
+      temp >>= 8;
+    }
+    return bytes;
   }
 
   Future<void> _connectToHost() async {
